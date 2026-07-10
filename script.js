@@ -585,64 +585,7 @@ choices.appendChild(card);
 
 });
 
-}
-/*====================================
-PART 4
-PSYCHOLOGY ENGINE
-====================================*/
 
-const psychology={
-
-anticipation:0,
-interruptions:0,
-recovery:0,
-workload:0
-
-};
-
-function applyChoice(choice){
-
-    changeResources(
-        choice.energy,
-        choice.focus,
-        choice.mood
-    );
-
-    advance(45);
-
-    player.progress+=30;
-
-    if(choice.energy<0){
-
-        psychology.workload+=Math.abs(choice.energy);
-
-    }
-
-    if(choice.mood<0){
-
-        psychology.anticipation+=Math.abs(choice.mood);
-
-    }
-
-    if(choice.focus<0){
-
-        psychology.interruptions+=Math.abs(choice.focus);
-
-    }
-
-    if(choice.energy>0 || choice.focus>0){
-
-        psychology.recovery+=10;
-
-    }
-
-    updateHUD();
-
-    notify(choice.result);
-
-    addTimeline(choice.result);
-
-}
 /*==================================================
 PART 4
 ENDING + PSYCHOLOGY

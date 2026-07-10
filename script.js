@@ -1,1589 +1,641 @@
-/*=====================================================
-MONDAY V2
-SCRIPT.JS
-PART A - CORE ENGINE
-=====================================================*/
+/* ============================================================
+   MONDAY — a stress budget simulator
+   Pure vanilla JS. Single state object drives everything.
+   ============================================================ */
 
-const game = {
+(function(){
 
-    player:{
-
-        energy:100,
-        focus:100,
-        mood:100,
-
-        time:510,          // 08:30
-
-        inbox:3
-
-    },
-
-    progress:0,
-
-    currentEvent:0,
-
-    timeline:[]
-
+/* ---------- central state ---------- */
+const state = {
+  screen: 'intro',
+  time: 540,              // simulated minutes, 540 = 9:00
+  dayStart: 540,
+  dayEnd: 1050,            // 17:30
+  resources: { energy: 100, focus: 100, mood: 100 },
+  inbox: 6,
+  timeline: [],
+  drivers: { interruptions: 0, workload: 0, anticipation: 0, recovery: 0 },
+  archetypeScore: { firefighter: 0, planner: 0, protector: 0, busy: 0, recovery: 0 },
+  queue: [],                // scheduled events for this playthrough, sorted by time
+  delayed: [],              // consequences waiting to fire
+  setupChoices: {},
+  tickHandle: null,
+  playing: false
 };
 
-//======================================
-// DOM
-//======================================
+/* ---------- setup modifiers ---------- */
+const SETUP_MODS = {
+  sleep: {
+    low:  { energy:-15, focus:-10, mood:-5 },
+    mid:  { energy:0,   focus:0,   mood:0  },
+    high: { energy:+10, focus:+5,  mood:+5 }
+  },
+  breakfast: {
+    coffee: { energy:+5,  focus:-5,  mood:0 },
+    light:  { energy:0,   focus:0,   mood:0 },
+    full:   { energy:+5,  focus:+5,  mood:0 }
+  },
+  commute: {
+    traffic: { energy:-5, focus:-5,  mood:-10 },
+    normal:  { energy:0,  focus:0,   mood:0 },
+    walk:    { energy:+5, focus:+5,  mood:+10 }
+  }
+};
 
-const screens=document.querySelectorAll(".screen");
+/* ---------- event pool ----------
+   time: rough slot in minutes-from-9am used for scheduling spread
+   drivers: which stress-driver buckets this choice's cost belongs to
+   arche: which archetype this choice leans toward
+*/
+const POOL = [
+  {
+    id:'manager_talk', source:'Slack — Manager', slot:40,
+    title:'"Can we talk later?"',
+    body:'No context. No emoji. Just five words sitting in your DMs.',
+    choices:[
+      { label:'Assume something is wrong', deltas:{mood:-14, focus:-8}, drivers:{anticipation:10}, arche:'firefighter' },
+      { label:'Ask for clarification now', deltas:{focus:-3, mood:+2}, drivers:{anticipation:2}, arche:'planner' },
+      { label:'Let it sit, keep working', deltas:{focus:-2}, drivers:{anticipation:5}, arche:'protector' }
+    ]
+  },
+  {
+    id:'inbox_42', source:'Outlook', slot:60,
+    title:'42 unread emails',
+    body:'It was 12 when you sat down. It multiplied while you made coffee.',
+    choices:[
+      { label:'Read everything, top to bottom', deltas:{energy:-10, focus:-10}, drivers:{workload:10}, arche:'busy' },
+      { label:'Scan and prioritize the top 5', deltas:{focus:-4}, drivers:{workload:4}, arche:'planner' },
+      { label:'Close the tab, deal with it later', deltas:{mood:+3}, drivers:{workload:2}, arche:'protector', setFlag:'inbox_ignored' }
+    ]
+  },
+  {
+    id:'meeting_overrun', source:'Calendar', slot:110,
+    title:'Meeting is 20 minutes over',
+    body:'The agenda finished a while ago. Nobody has said anything.',
+    choices:[
+      { label:'Stay, say nothing', deltas:{energy:-10, mood:-6}, drivers:{workload:8}, arche:'firefighter' },
+      { label:'Suggest wrapping up', deltas:{focus:-2, mood:+2}, drivers:{workload:2}, arche:'planner' },
+      { label:'Quietly multitask through it', deltas:{focus:-12}, drivers:{workload:6}, arche:'busy' }
+    ]
+  },
+  {
+    id:'coworker_help', source:'In person', slot:130,
+    title:'A coworker needs help',
+    body:'"Got two minutes?" It is rarely two minutes.',
+    choices:[
+      { label:'Help immediately', deltas:{focus:-12, mood:+4}, drivers:{workload:8}, arche:'busy' },
+      { label:'Schedule it for later today', deltas:{focus:-2}, drivers:{workload:2}, arche:'planner' },
+      { label:'Decline, protect your focus block', deltas:{mood:-4, focus:+4}, drivers:{workload:0}, arche:'protector' }
+    ]
+  },
+  {
+    id:'production_issue', source:'PagerDuty', slot:160,
+    title:'Unexpected outage',
+    body:'A client-facing system just went down. People are already asking questions.',
+    choices:[
+      { label:'Stay calm, triage methodically', deltas:{energy:-10, focus:-8, mood:-4}, drivers:{workload:12}, arche:'protector' },
+      { label:'Panic-jump between five threads at once', deltas:{energy:-18, focus:-16, mood:-10}, drivers:{workload:14, interruptions:6}, arche:'firefighter' },
+      { label:'Wait for someone else to own it', deltas:{mood:-8}, drivers:{anticipation:8}, arche:'busy' }
+    ]
+  },
+  {
+    id:'slack_ping_1', source:'Slack — #general', slot:25,
+    title:'A GIF war has broken out',
+    body:'Seventeen notifications in ninety seconds. None of them are for you.',
+    choices:[
+      { label:'Mute the channel', deltas:{focus:+3}, drivers:{interruptions:0}, arche:'protector' },
+      { label:'Glance at every one', deltas:{focus:-6}, drivers:{interruptions:8}, arche:'busy' }
+    ]
+  },
+  {
+    id:'client_escalation', source:'Email — Client', slot:190,
+    title:'"This is unacceptable."',
+    body:'A client escalation, cc\'ing your director. The tone is sharp.',
+    choices:[
+      { label:'Draft a calm, thorough reply', deltas:{focus:-10, mood:-6}, drivers:{workload:10}, arche:'protector' },
+      { label:'Fire back a quick defensive reply', deltas:{mood:-12, energy:-6}, drivers:{workload:6, anticipation:4}, arche:'firefighter' },
+      { label:'Forward it to your manager', deltas:{mood:-2}, drivers:{workload:2}, arche:'planner' }
+    ]
+  },
+  {
+    id:'phone_call', source:'Phone', slot:75,
+    title:'An unknown number is calling',
+    body:'Your phone has been buzzing on the desk for ten seconds.',
+    choices:[
+      { label:'Answer it', deltas:{focus:-8}, drivers:{interruptions:8}, arche:'busy' },
+      { label:'Let it go to voicemail', deltas:{focus:+2}, drivers:{interruptions:0}, arche:'protector' }
+    ]
+  },
+  {
+    id:'deep_work_block', source:'Calendar', slot:95,
+    title:'A rare open 45 minutes',
+    body:'Nothing is scheduled. Your focus block from three weeks ago finally arrived.',
+    choices:[
+      { label:'Protect it, close every tab', deltas:{focus:+14, mood:+4}, drivers:{recovery:10}, arche:'protector' },
+      { label:'Use it to clear small tasks instead', deltas:{focus:-4}, drivers:{workload:4}, arche:'busy' }
+    ]
+  },
+  {
+    id:'micro_break', source:'You', slot:150,
+    title:'You notice your shoulders are up by your ears',
+    body:'A small, physical signal that you have been pushing for a while.',
+    choices:[
+      { label:'Take five minutes away from the screen', deltas:{energy:+10, mood:+8}, drivers:{recovery:10}, arche:'recovery' },
+      { label:'Push through it', deltas:{energy:-8, mood:-4}, drivers:{workload:4}, arche:'firefighter' }
+    ]
+  },
+  {
+    id:'lunch', source:'Calendar', slot:205,
+    title:'It is 12:30',
+    body:'Your stomach has been reminding you for a while now.',
+    choices:[
+      { label:'Skip it, keep working', deltas:{energy:-14, mood:-8}, drivers:{workload:6}, arche:'busy' },
+      { label:'Take a proper break away from your desk', deltas:{energy:+16, mood:+12, focus:+6}, drivers:{recovery:16}, arche:'recovery' },
+      { label:'Eat at your desk while working', deltas:{energy:+2, focus:-6}, drivers:{workload:4}, arche:'firefighter' }
+    ],
+    mandatory: true
+  },
+  {
+    id:'slack_ping_2', source:'Slack — DM', slot:220,
+    title:'"quick q 🙏"',
+    body:'It is never quick.',
+    choices:[
+      { label:'Answer right away', deltas:{focus:-6}, drivers:{interruptions:8}, arche:'busy' },
+      { label:'Reply when you finish your current task', deltas:{focus:+2}, drivers:{interruptions:2}, arche:'planner' }
+    ]
+  },
+  {
+    id:'ignored_email_consequence', source:'Email', slot:260,
+    title:'"Following up — again."',
+    body:'The email you closed the tab on this morning has grown teeth.',
+    requiresFlag:'inbox_ignored',
+    choices:[
+      { label:'Handle it now, apologize for the delay', deltas:{mood:-10, focus:-8}, drivers:{workload:10, anticipation:6}, arche:'firefighter' },
+      { label:'Reply briefly, address it properly tomorrow', deltas:{mood:-4, focus:-2}, drivers:{workload:4}, arche:'planner' }
+    ]
+  },
+  {
+    id:'calendar_double_book', source:'Calendar', slot:240,
+    title:'Two meetings, same slot',
+    body:'Nobody noticed until now. Both organizers are messaging you.',
+    choices:[
+      { label:'Attend both, split attention', deltas:{focus:-14, mood:-6}, drivers:{workload:8, interruptions:6}, arche:'busy' },
+      { label:'Pick one, send a clear note to the other', deltas:{focus:-2, mood:-2}, drivers:{workload:2}, arche:'planner' }
+    ]
+  },
+  {
+    id:'praise_moment', source:'Slack — Manager', slot:280,
+    title:'"Great work on that last one."',
+    body:'A short, genuine message. Easy to miss if you are moving fast.',
+    choices:[
+      { label:'Pause and actually take it in', deltas:{mood:+12}, drivers:{recovery:8}, arche:'recovery' },
+      { label:'Say thanks and move straight on', deltas:{mood:+3}, drivers:{recovery:0}, arche:'busy' }
+    ]
+  },
+  {
+    id:'scope_creep', source:'Email — Stakeholder', slot:300,
+    title:'"While you\'re at it, could you also..."',
+    body:'A small ask, tacked onto the end of an unrelated thread.',
+    choices:[
+      { label:'Say yes to keep things smooth', deltas:{focus:-8, mood:-4}, drivers:{workload:8}, arche:'busy' },
+      { label:'Push back and scope it properly', deltas:{mood:-2}, drivers:{workload:2}, arche:'planner' }
+    ]
+  },
+  {
+    id:'coffee_run', source:'You', slot:170,
+    title:'The office is quiet for a second',
+    body:'Nobody is asking you for anything, for once.',
+    choices:[
+      { label:'Get up, get water or coffee, stretch', deltas:{energy:+8, mood:+6}, drivers:{recovery:8}, arche:'recovery' },
+      { label:'Use the gap to clear more inbox', deltas:{focus:-6}, drivers:{workload:6}, arche:'busy' }
+    ]
+  },
+  {
+    id:'notification_storm', source:'Phone + Slack + Email', slot:320,
+    title:'Three things ping at once',
+    body:'A calendar reminder, a Slack mention, and an email — all in the same second.',
+    choices:[
+      { label:'Handle all three immediately', deltas:{focus:-14, energy:-6}, drivers:{interruptions:14}, arche:'firefighter' },
+      { label:'Silence notifications for the next hour', deltas:{focus:+8}, drivers:{interruptions:0}, arche:'protector' }
+    ]
+  },
+  {
+    id:'feedback_request', source:'Slack — Peer', slot:340,
+    title:'"Can you review this before end of day?"',
+    body:'A reasonable ask, with a deadline that is closer than it feels.',
+    choices:[
+      { label:'Drop what you are doing, review now', deltas:{focus:-10}, drivers:{workload:8}, arche:'busy' },
+      { label:'Block 20 minutes for it later today', deltas:{focus:-2}, drivers:{workload:2}, arche:'planner' }
+    ]
+  },
+  {
+    id:'bad_news', source:'1:1', slot:360,
+    title:'A project you cared about is being deprioritized',
+    body:'Delivered plainly, in a scheduled 1:1. Nobody is at fault.',
+    choices:[
+      { label:'Sit with it for a moment before responding', deltas:{mood:-6}, drivers:{recovery:4}, arche:'recovery' },
+      { label:'Immediately pivot to "what\'s next"', deltas:{mood:-10, focus:-4}, drivers:{workload:4, anticipation:4}, arche:'firefighter' }
+    ]
+  },
+  {
+    id:'walk_offer', source:'Coworker', slot:380,
+    title:'"Want to grab a quick walk?"',
+    body:'A coworker heading out for ten minutes, asking if you want in.',
+    choices:[
+      { label:'Go — step away from the desk', deltas:{energy:+10, mood:+8, focus:+4}, drivers:{recovery:10}, arche:'recovery' },
+      { label:'Stay, there is too much to do', deltas:{mood:-4}, drivers:{workload:2}, arche:'busy' }
+    ]
+  }
+];
 
-const energyBar=document.getElementById("energyBar");
-const focusBar=document.getElementById("focusBar");
-const moodBar=document.getElementById("moodBar");
+const FINALE = {
+  id:'finale', source:'Email — Urgent', slot:9999,
+  title:'A last urgent request lands at 4:45',
+  body:'Whatever is left of you has to deal with whatever is left of the day.',
+  choices:[
+    { label:'Push through and finish it properly', deltas:{energy:-16, focus:-14, mood:-6}, drivers:{workload:14}, arche:'firefighter' },
+    { label:'Do a fast, imperfect version and stop', deltas:{energy:-6, focus:-6, mood:-2}, drivers:{workload:8}, arche:'planner' },
+    { label:'Explain you\'ll finish it first thing tomorrow', deltas:{mood:+4, energy:-2}, drivers:{workload:2}, arche:'protector' }
+  ],
+  mandatory: true
+};
 
-const energyValue=document.getElementById("energyValue");
-const focusValue=document.getElementById("focusValue");
-const moodValue=document.getElementById("moodValue");
+/* ============================================================
+   DOM refs
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const screens = {
+  intro: $('screen-intro'),
+  setup: $('screen-setup'),
+  day:   $('screen-day'),
+  end:   $('screen-end')
+};
 
-const clock=document.getElementById("clock");
+function showScreen(name){
+  Object.values(screens).forEach(s => s.classList.remove('active'));
+  screens[name].classList.add('active');
+  state.screen = name;
+}
 
-const progressBar=document.getElementById("progressBar");
+/* ============================================================
+   INTRO -> SETUP
+   ============================================================ */
+$('btn-start').addEventListener('click', () => showScreen('setup'));
 
-const mailCount=document.getElementById("mailCount");
-
-const miniTimeline=document.getElementById("miniTimeline");
-
-const notification=document.getElementById("notification");
-
-const notificationText=document.getElementById("notificationText");
-
-//======================================
-// BUTTONS
-//======================================
-
-document
-.getElementById("beginBtn")
-.addEventListener("click",showSetup);
-
-document
-.getElementById("startGame")
-.addEventListener("click",startGame);
-
-document
-.getElementById("playAgain")
-.addEventListener("click",()=>{
-
-location.reload();
-
-});
-
-//======================================
-// SCREEN SYSTEM
-//======================================
-
-function showScreen(id){
-
-    screens.forEach(screen=>{
-
-        screen.classList.remove("active");
-
+document.querySelectorAll('.setup-group').forEach(group => {
+  const key = group.dataset.group;
+  group.querySelectorAll('.option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      group.querySelectorAll('.option').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      state.setupChoices[key] = btn.dataset.value;
+      checkSetupComplete();
     });
+  });
+});
 
-    document
-    .getElementById(id)
-    .classList.add("active");
-
+function checkSetupComplete(){
+  const done = ['sleep','breakfast','commute'].every(k => state.setupChoices[k]);
+  $('btn-enter-office').disabled = !done;
 }
 
-//======================================
-// CLOCK
-//======================================
+$('btn-enter-office').addEventListener('click', () => {
+  applySetup();
+  buildQueue();
+  showScreen('day');
+  startDay();
+});
 
-function updateClock(){
-
-    const hour=Math.floor(game.player.time/60);
-
-    const minute=game.player.time%60;
-
-    clock.innerHTML=
-
-        String(hour).padStart(2,"0")
-
-        +
-
-        ":"
-
-        +
-
-        String(minute).padStart(2,"0");
-
+function applySetup(){
+  ['sleep','breakfast','commute'].forEach(key => {
+    const mod = SETUP_MODS[key][state.setupChoices[key]];
+    Object.keys(mod).forEach(r => state.resources[r] = clamp(state.resources[r] + mod[r]));
+  });
+  renderMeters(true);
 }
 
-function advanceTime(minutes){
+/* ============================================================
+   BUILD THE DAY'S QUEUE
+   ============================================================ */
+function buildQueue(){
+  const mandatory = POOL.filter(e => e.mandatory);
+  const optional = shuffle(POOL.filter(e => !e.mandatory && !e.requiresFlag));
+  const chosen = optional.slice(0, 7);
+  let all = [...chosen, ...mandatory].sort((a,b) => a.slot - b.slot);
+  all.push(FINALE);
 
-    game.player.time+=minutes;
+  // spread across the working day with light jitter, mapped to real time range
+  const span = state.dayEnd - state.dayStart - 30;
+  all = all.map((e, i) => {
+    const frac = i / (all.length - 1);
+    const time = Math.round(state.dayStart + 15 + frac * span + (Math.random()*10 - 5));
+    return { ...e, time };
+  });
+  state.queue = all;
 
-    if(game.player.time>1020){
+  // conditional follow-up events (delayed consequences) are pulled in from POOL on demand
+}
 
-        game.player.time=1020;
+/* ============================================================
+   RUN THE DAY — timer loop
+   ============================================================ */
+const REAL_DURATION_MS = 5 * 60 * 1000; // ~5 minutes of real time
+let simTotalRange, tickStart;
 
+function startDay(){
+  simTotalRange = state.dayEnd - state.dayStart;
+  tickStart = performance.now();
+  state.playing = true;
+  logTimeline(state.dayStart, 'You sit down at your desk. The day begins.');
+  scheduleNextEvent();
+  state.tickHandle = requestAnimationFrame(tick);
+}
+
+function tick(now){
+  if (!state.playing) return;
+  const elapsed = now - tickStart;
+  const frac = Math.min(elapsed / REAL_DURATION_MS, 1);
+  state.time = state.dayStart + frac * simTotalRange;
+  renderClock();
+
+  // check for a due event
+  if (state.queue.length && state.time >= state.queue[0].time && !eventShowing()){
+    const ev = state.queue.shift();
+    presentEvent(ev);
+  }
+
+  if (frac >= 1 && !state.queue.length && !eventShowing()){
+    state.playing = false;
+    endDay();
+    return;
+  }
+  state.tickHandle = requestAnimationFrame(tick);
+}
+
+function scheduleNextEvent(){ /* handled inside tick loop */ }
+
+function eventShowing(){
+  return $('event-card').classList.contains('visible');
+}
+
+/* ============================================================
+   RENDER: clock + progress + meters
+   ============================================================ */
+function renderClock(){
+  const totalMin = Math.round(state.time);
+  let h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  let h12 = h % 12; if (h12 === 0) h12 = 12;
+  $('clock-time').textContent = `${h12}:${m.toString().padStart(2,'0')}`;
+  document.querySelector('.clock-label').textContent = ampm;
+
+  const frac = (state.time - state.dayStart) / (state.dayEnd - state.dayStart);
+  $('day-progress-fill').style.width = `${clamp(frac*100,0,100)}%`;
+  $('inbox-count').textContent = state.inbox;
+}
+
+function renderMeters(instant){
+  ['energy','focus','mood'].forEach(r => {
+    const val = Math.round(clamp(state.resources[r]));
+    $(`val-${r}`).textContent = val;
+    const fill = $(`fill-${r}`);
+    fill.style.width = `${val}%`;
+    fill.classList.toggle('low', val <= 25);
+  });
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+function presentEvent(ev){
+  if (ev.requiresFlag && !state.flags_check) {} // placeholder, flags checked at build time for follow-ups
+  $('workspace-idle').style.opacity = 0;
+  const card = $('event-card');
+  $('event-source').textContent = ev.source;
+  $('event-title').textContent = ev.title;
+  $('event-body').textContent = ev.body;
+  const choicesEl = $('event-choices');
+  choicesEl.innerHTML = '';
+
+  ev.choices.forEach(choice => {
+    const btn = document.createElement('button');
+    btn.className = 'event-choice';
+    btn.textContent = choice.label;
+    btn.addEventListener('click', () => resolveChoice(ev, choice));
+    choicesEl.appendChild(btn);
+  });
+
+  card.classList.add('visible');
+  bumpInbox(ev);
+}
+
+function bumpInbox(ev){
+  if (['inbox_42','scope_creep','client_escalation','feedback_request'].includes(ev.id)) {
+    state.inbox = Math.max(0, state.inbox + (Math.random() > 0.5 ? 2 : -3));
+  } else {
+    state.inbox = Math.max(0, state.inbox + (Math.random() > 0.7 ? 1 : 0));
+  }
+}
+
+function resolveChoice(ev, choice){
+  // apply resource deltas
+  Object.keys(choice.deltas || {}).forEach(r => {
+    state.resources[r] = clamp(state.resources[r] + choice.deltas[r]);
+  });
+  renderMeters();
+
+  // apply driver costs
+  Object.keys(choice.drivers || {}).forEach(d => {
+    state.drivers[d] += choice.drivers[d];
+  });
+
+  // archetype scoring
+  if (choice.arche) state.archetypeScore[choice.arche] += 1;
+
+  // timeline
+  logTimeline(Math.round(state.time), `${ev.title} → ${choice.label}`);
+
+  // toast summary of biggest resource hit
+  showToast(choice.deltas);
+
+  // handle flags & follow-up injection
+  if (choice.setFlag === 'inbox_ignored'){
+    const followUp = POOL.find(e => e.id === 'ignored_email_consequence');
+    if (followUp) {
+      const t = Math.min(state.time + 60, state.dayEnd - 20);
+      state.queue.push({ ...followUp, time: t });
+      state.queue.sort((a,b) => a.time - b.time);
     }
+  }
 
-    updateClock();
-
+  // hide card, resume
+  $('event-card').classList.remove('visible');
+  $('workspace-idle').style.opacity = 1;
+  $('idle-text').textContent = pickIdleLine();
 }
 
-//======================================
-// HUD
-//======================================
-
-function updateHUD(){
-
-    updateBar(
-
-        energyBar,
-
-        energyValue,
-
-        game.player.energy
-
-    );
-
-    updateBar(
-
-        focusBar,
-
-        focusValue,
-
-        game.player.focus
-
-    );
-
-    updateBar(
-
-        moodBar,
-
-        moodValue,
-
-        game.player.mood
-
-    );
-
-    progressBar.style.width=
-
-        game.progress+"%";
-
-    mailCount.innerHTML=
-
-        game.player.inbox+
-
-        " unread";
-
-}
-
-function updateBar(bar,label,value){
-
-    value=Math.max(
-
-        0,
-
-        Math.min(100,value)
-
-    );
-
-    bar.style.width=value+"%";
-
-    label.innerHTML=Math.round(value);
-
-}
-
-//======================================
-// RESOURCES
-//======================================
-
-function changeResources(
-
-energy=0,
-
-focus=0,
-
-mood=0
-
-){
-
-    game.player.energy+=energy;
-
-    game.player.focus+=focus;
-
-    game.player.mood+=mood;
-
-    game.player.energy=Math.max(
-        0,
-        Math.min(100,game.player.energy)
-    );
-
-    game.player.focus=Math.max(
-        0,
-        Math.min(100,game.player.focus)
-    );
-
-    game.player.mood=Math.max(
-        0,
-        Math.min(100,game.player.mood)
-    );
-
-    updateHUD();
-
-}
-
-//======================================
-// TIMELINE
-//======================================
-
-function addTimeline(text){
-
-    game.timeline.push(text);
-
-    const item=document.createElement("div");
-
-    item.className="timelineItem";
-
-    item.innerHTML=text;
-
-    miniTimeline.prepend(item);
-
-}
-
-//======================================
-// TOAST
-//======================================
-
-function toast(text){
-
-    notificationText.innerHTML=text;
-
-    notification.classList.add("show");
-
-    setTimeout(()=>{
-
-        notification.classList.remove("show");
-
-    },2500);
-
-}
-
-//======================================
-// STARTUP
-//======================================
-
-updateClock();
-
-updateHUD();
-/*=====================================================
-PART B
-MORNING SETUP
-=====================================================*/
-
-const morningQuestions=[
-
-{
-
-title:"How did you sleep?",
-
-options:[
-
-{
-
-text:"😴 Less than 5 hours",
-
-energy:-20,
-
-focus:-15,
-
-mood:-10
-
-},
-
-{
-
-text:"🙂 Around 7 hours",
-
-energy:0,
-
-focus:0,
-
-mood:0
-
-},
-
-{
-
-text:"😄 8+ hours",
-
-energy:15,
-
-focus:10,
-
-mood:5
-
-}
-
-]
-
-},
-
-{
-
-title:"Breakfast",
-
-options:[
-
-{
-
-text:"☕ Coffee only",
-
-energy:-5,
-
-focus:5,
-
-mood:-5
-
-},
-
-{
-
-text:"🥣 Light breakfast",
-
-energy:5,
-
-focus:5,
-
-mood:5
-
-},
-
-{
-
-text:"🍳 Proper meal",
-
-energy:10,
-
-focus:10,
-
-mood:10
-
-}
-
-]
-
-},
-
-{
-
-title:"Commute",
-
-options:[
-
-{
-
-text:"🚗 Heavy traffic",
-
-energy:-10,
-
-focus:-10,
-
-mood:-10
-
-},
-
-{
-
-text:"🚆 Normal commute",
-
-energy:0,
-
-focus:0,
-
-mood:0
-
-},
-
-{
-
-text:"🚶 Walked / Relaxed",
-
-energy:10,
-
-focus:5,
-
-mood:10
-
-}
-
-]
-
-}
-
+const IDLE_LINES = [
+  'The day is quiet for a moment.',
+  'A short lull. Nothing pinging, for now.',
+  'Time moves. Nobody needs anything right this second.',
+  'A brief stretch of uninterrupted time.'
 ];
+function pickIdleLine(){ return IDLE_LINES[Math.floor(Math.random()*IDLE_LINES.length)]; }
 
-let setupAnswers=[];
-
-//====================================
-
-function showSetup(){
-
-showScreen("setup");
-
-buildSetup();
-
+function showToast(deltas){
+  if (!deltas) return;
+  const entries = Object.entries(deltas);
+  if (!entries.length) return;
+  const [res, val] = entries.sort((a,b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+  const sign = val > 0 ? '+' : '';
+  const layer = $('toast-layer');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = `${capitalize(res)} ${sign}${val}`;
+  layer.appendChild(t);
+  setTimeout(() => t.remove(), 2600);
 }
 
-//====================================
+function logTimeline(time, text){
+  state.timeline.push({ time, text });
+  const list = $('feed-list');
+  const item = document.createElement('div');
+  item.className = 'feed-item';
+  item.innerHTML = `<span class="feed-time">${formatTime(time)}</span>${escapeHtml(text)}`;
+  list.appendChild(item);
+  while (list.children.length > 8) list.removeChild(list.firstChild);
+}
 
-function buildSetup(){
+/* ============================================================
+   END OF DAY
+   ============================================================ */
+function endDay(){
+  cancelAnimationFrame(state.tickHandle);
+  const { energy, focus, mood } = state.resources;
 
-const container=document.getElementById("setupContainer");
+  $('end-fill-energy').style.width = `${energy}%`;
+  $('end-fill-focus').style.width = `${focus}%`;
+  $('end-fill-mood').style.width = `${mood}%`;
+  $('end-val-energy').textContent = Math.round(energy);
+  $('end-val-focus').textContent = Math.round(focus);
+  $('end-val-mood').textContent = Math.round(mood);
 
-container.innerHTML="";
+  renderDrivers();
+  renderArchetype();
+  renderEndTimeline();
 
-setupAnswers=[];
+  showScreen('end');
+}
 
-morningQuestions.forEach((question,index)=>{
+function renderDrivers(){
+  const d = state.drivers;
+  const total = Object.values(d).reduce((a,b) => a+b, 0) || 1;
+  const labels = {
+    interruptions: 'Interruptions',
+    workload: 'Workload',
+    anticipation: 'Anticipation',
+    recovery: 'Recovery invested'
+  };
+  const list = $('drivers-list');
+  list.innerHTML = '';
+  Object.keys(labels).forEach(key => {
+    const pct = Math.round((d[key] / total) * 100);
+    const row = document.createElement('div');
+    row.className = 'driver-row';
+    row.innerHTML = `
+      <div class="driver-top"><span>${labels[key]}</span><span>${pct}%</span></div>
+      <div class="driver-bar"><div class="driver-bar-fill" style="width:${pct}%"></div></div>`;
+    list.appendChild(row);
+  });
+}
 
-const card=document.createElement("div");
-
-card.className="setupCard";
-
-card.innerHTML=`<h3>${question.title}</h3>`;
-
-const group=document.createElement("div");
-
-group.className="optionGroup";
-
-question.options.forEach((option,optIndex)=>{
-
-const button=document.createElement("div");
-
-button.className="option";
-
-button.innerHTML=option.text;
-
-button.onclick=()=>{
-
-group.querySelectorAll(".option")
-
-.forEach(o=>o.classList.remove("selected"));
-
-button.classList.add("selected");
-
-setupAnswers[index]=option;
-
+const ARCHETYPES = {
+  firefighter: {
+    name: 'Reactive Firefighter',
+    desc: 'You met almost everything head-on, the moment it arrived. That responsiveness is a real strength — but it left little budget in reserve for whatever came last.'
+  },
+  planner: {
+    name: 'Balanced Planner',
+    desc: 'You triaged instead of reacting — sorting what needed you now from what could wait. Your resources drained more slowly because your attention wasn\'t constantly redirected.'
+  },
+  protector: {
+    name: 'Deep Work Protector',
+    desc: 'You defended your focus deliberately, even when it meant saying no. That protection paid off in the moments that actually needed your full attention.'
+  },
+  busy: {
+    name: 'Always Busy',
+    desc: 'You said yes often, stayed available, and kept things moving for everyone around you. It came at a steady, quiet cost to your own focus and mood.'
+  },
+  recovery: {
+    name: 'Recovery Champion',
+    desc: 'You treated small breaks as part of the job, not a reward for finishing it. That habit of topping up kept your budget healthier than most days allow.'
+  }
 };
 
-group.appendChild(button);
+function renderArchetype(){
+  const scores = state.archetypeScore;
+  let winner = 'planner', best = -1;
+  Object.keys(scores).forEach(k => { if (scores[k] > best){ best = scores[k]; winner = k; } });
+  const a = ARCHETYPES[winner];
+  $('end-archetype').textContent = a.name;
+  $('end-archetype-desc').textContent = a.desc;
+}
 
+function renderEndTimeline(){
+  const el = $('end-timeline');
+  el.innerHTML = '';
+  state.timeline.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'feed-item';
+    row.innerHTML = `<span class="feed-time">${formatTime(item.time)}</span>${escapeHtml(item.text)}`;
+    el.appendChild(row);
+  });
+}
+
+/* ============================================================
+   REPLAY
+   ============================================================ */
+$('btn-replay').addEventListener('click', () => {
+  Object.assign(state, {
+    time: 540, resources: { energy:100, focus:100, mood:100 }, inbox: 6,
+    timeline: [], drivers: { interruptions:0, workload:0, anticipation:0, recovery:0 },
+    archetypeScore: { firefighter:0, planner:0, protector:0, busy:0, recovery:0 },
+    queue: [], delayed: [], setupChoices: {}, playing: false
+  });
+  document.querySelectorAll('.option.selected').forEach(b => b.classList.remove('selected'));
+  $('btn-enter-office').disabled = true;
+  $('feed-list').innerHTML = '';
+  renderMeters();
+  showScreen('intro');
 });
 
-card.appendChild(group);
-
-container.appendChild(card);
-
-});
-
+/* ============================================================
+   UTILITIES
+   ============================================================ */
+function clamp(v, min=0, max=100){ return Math.max(min, Math.min(max, v)); }
+function shuffle(arr){
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i+1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function formatTime(min){
+  let h = Math.floor(min/60), m = Math.round(min%60);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  let h12 = h % 12; if (h12===0) h12=12;
+  return `${h12}:${m.toString().padStart(2,'0')} ${ampm}`;
+}
+function capitalize(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
+function escapeHtml(s){
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
 }
 
-//====================================
+/* init */
+renderMeters();
 
-function startGame(){
-
-if(setupAnswers.length<3){
-
-toast("Complete all three morning questions.");
-
-return;
-
-}
-
-setupAnswers.forEach(answer=>{
-
-changeResources(
-
-answer.energy,
-
-answer.focus,
-
-answer.mood
-
-);
-
-});
-
-game.progress=10;
-
-updateHUD();
-
-toast("Your workday has begun.");
-
-showScreen("eventScreen");
-
-loadEvent();
-
-}
-/*=====================================================
-PART C1
-EVENT ENGINE + FIRST EVENTS
-=====================================================*/
-
-const events=[
-
-{
-
-type:"Slack",
-
-title:"Manager Message",
-
-text:"Your manager sends: 'Can we catch up later today?'",
-
-choices:[
-
-{
-
-text:"Assume something is wrong",
-
-result:"You spend the next hour worrying.",
-
-energy:-10,
-
-focus:-15,
-
-mood:-15
-
-},
-
-{
-
-text:"Reply: Sure! What time works?",
-
-result:"The uncertainty disappears.",
-
-energy:-2,
-
-focus:0,
-
-mood:5
-
-},
-
-{
-
-text:"Ignore it for now",
-
-result:"It stays in the back of your mind.",
-
-energy:-5,
-
-focus:-5,
-
-mood:-5
-
-}
-
-]
-
-},
-
-{
-
-type:"Email",
-
-title:"Inbox Explosion",
-
-text:"You arrive to find 42 unread emails.",
-
-choices:[
-
-{
-
-text:"Read every email first",
-
-result:"You lose your entire morning.",
-
-energy:-8,
-
-focus:-15,
-
-mood:-5
-
-},
-
-{
-
-text:"Prioritize urgent emails",
-
-result:"You feel back in control.",
-
-energy:-2,
-
-focus:5,
-
-mood:5
-
-},
-
-{
-
-text:"Ignore them",
-
-result:"They keep distracting you.",
-
-energy:-5,
-
-focus:-10,
-
-mood:-5
-
-}
-
-]
-
-},
-
-{
-
-type:"Meeting",
-
-title:"Stand-up Meeting",
-
-text:"The meeting starts running over time.",
-
-choices:[
-
-{
-
-text:"Stay quietly",
-
-result:"You miss time for important work.",
-
-energy:-5,
-
-focus:-10,
-
-mood:-5
-
-},
-
-{
-
-text:"Suggest wrapping up",
-
-result:"The meeting ends on time.",
-
-energy:0,
-
-focus:5,
-
-mood:5
-
-},
-
-{
-
-text:"Multitask during meeting",
-
-result:"You miss half the discussion.",
-
-energy:-2,
-
-focus:-8,
-
-mood:0
-
-}
-
-]
-
-},
-
-{
-
-type:"Coworker",
-
-title:"Quick Question",
-
-text:"A teammate interrupts you for help.",
-
-choices:[
-
-{
-
-text:"Help immediately",
-
-result:"You lose focus but strengthen the relationship.",
-
-energy:-5,
-
-focus:-12,
-
-mood:8
-
-},
-
-{
-
-text:"Schedule time later",
-
-result:"You protect your work and still help.",
-
-energy:-2,
-
-focus:5,
-
-mood:5
-
-},
-
-{
-
-text:"Decline",
-
-result:"You finish work but feel guilty.",
-
-energy:0,
-
-focus:5,
-
-mood:-8
-
-}
-
-]
-
-}
-
-];
-
-//======================================
-
-function loadEvent(){
-
-if(game.currentEvent>=events.length){
-
-finishGame();
-
-return;
-
-}
-
-const event=events[game.currentEvent];
-
-document.getElementById("eventType").innerHTML=event.type;
-
-document.getElementById("eventTitle").innerHTML=event.title;
-
-document.getElementById("eventText").innerHTML=event.text;
-
-const choices=document.getElementById("choices");
-
-choices.innerHTML="";
-
-event.choices.forEach(choice=>{
-
-const card=document.createElement("div");
-
-card.className="choice";
-
-card.innerHTML=`
-
-<h4>${choice.text}</h4>
-
-<p>${choice.result}</p>
-
-`;
-
-card.onclick=()=>{
-
-applyChoice(choice);
-
-};
-
-choices.appendChild(card);
-
-});
-
-}
-/*=====================================================
-PART C2
-MORE EVENTS + GAMEPLAY ENGINE
-=====================================================*/
-
-events.push(
-
-{
-
-type:"Client",
-
-title:"Urgent Escalation",
-
-text:"A client reports that a payment failed and wants an immediate resolution.",
-
-choices:[
-
-{
-
-text:"Drop everything and investigate",
-
-result:"The client appreciates the speed, but your own work stalls.",
-
-energy:-12,
-focus:-12,
-mood:-5
-
-},
-
-{
-
-text:"Acknowledge the issue and prioritise tasks",
-
-result:"Expectations are managed and you stay organised.",
-
-energy:-5,
-focus:5,
-mood:5
-
-},
-
-{
-
-text:"Ask someone else to handle it",
-
-result:"The issue is resolved, but you feel disconnected.",
-
-energy:0,
-focus:5,
-mood:-5
-
-}
-
-]
-
-},
-
-{
-
-type:"Teams",
-
-title:"Constant Notifications",
-
-text:"Messages keep arriving while you're trying to concentrate.",
-
-choices:[
-
-{
-
-text:"Reply immediately to everything",
-
-result:"You never get into deep work.",
-
-energy:-8,
-focus:-18,
-mood:-5
-
-},
-
-{
-
-text:"Mute notifications for 30 minutes",
-
-result:"You complete an important task uninterrupted.",
-
-energy:2,
-focus:12,
-mood:5
-
-},
-
-{
-
-text:"Keep glancing at Teams",
-
-result:"Your attention stays fragmented.",
-
-energy:-5,
-focus:-10,
-mood:-3
-
-}
-
-]
-
-},
-
-{
-
-type:"Operations",
-
-title:"Production Issue",
-
-text:"A service suddenly stops working. Everyone starts messaging you.",
-
-choices:[
-
-{
-
-text:"Stay calm and prioritise",
-
-result:"The situation stabilises quickly.",
-
-energy:-8,
-focus:8,
-mood:3
-
-},
-
-{
-
-text:"Panic and multitask",
-
-result:"You become overwhelmed.",
-
-energy:-15,
-focus:-15,
-mood:-15
-
-},
-
-{
-
-text:"Wait for someone else",
-
-result:"Nothing improves while you wait.",
-
-energy:-5,
-focus:-8,
-mood:-10
-
-}
-
-]
-
-},
-
-{
-
-type:"Lunch",
-
-title:"It's 1:30 PM",
-
-text:"You've been working continuously all morning.",
-
-choices:[
-
-{
-
-text:"Skip lunch",
-
-result:"You keep working but your energy drops sharply.",
-
-energy:-20,
-focus:-10,
-mood:-10
-
-},
-
-{
-
-text:"Take a proper break",
-
-result:"You return feeling refreshed.",
-
-energy:15,
-focus:10,
-mood:10
-
-},
-
-{
-
-text:"Eat while checking email",
-
-result:"You never really disconnect.",
-
-energy:-5,
-focus:-3,
-mood:0
-
-}
-
-]
-
-}
-
-);
-
-//==================================================
-// GAMEPLAY ENGINE
-//==================================================
-
-function applyChoice(choice){
-
-    changeResources(
-
-        choice.energy,
-
-        choice.focus,
-
-        choice.mood
-
-    );
-
-    game.progress+=12;
-
-    if(game.progress>100){
-
-        game.progress=100;
-
-    }
-
-    advanceTime(45);
-
-    game.player.inbox+=Math.floor(Math.random()*3);
-
-    addTimeline(choice.result);
-
-    toast(choice.result);
-
-    updateHUD();
-
-    game.currentEvent++;
-
-    setTimeout(()=>{
-
-        loadEvent();
-
-    },700);
-
-}
-/*=====================================================
-PART C3
-ENDING + SUMMARY
-=====================================================*/
-
-function finishGame(){
-
-    showScreen("ending");
-
-    buildSummary();
-
-    buildTimeline();
-
-    buildInsights();
-
-}
-
-//======================================
-// SUMMARY CARDS
-//======================================
-
-function buildSummary(){
-
-    const summary=document.getElementById("summary");
-
-    summary.innerHTML=`
-
-        <div class="summaryCard">
-
-            <h4>⚡ Energy</h4>
-
-            <div class="summaryValue">
-
-                ${game.player.energy}
-
-            </div>
-
-        </div>
-
-        <div class="summaryCard">
-
-            <h4>🧠 Focus</h4>
-
-            <div class="summaryValue">
-
-                ${game.player.focus}
-
-            </div>
-
-        </div>
-
-        <div class="summaryCard">
-
-            <h4>😊 Mood</h4>
-
-            <div class="summaryValue">
-
-                ${game.player.mood}
-
-            </div>
-
-        </div>
-
-    `;
-
-}
-
-//======================================
-// TIMELINE
-//======================================
-
-function buildTimeline(){
-
-    const container=document.getElementById("timeline");
-
-    container.innerHTML="";
-
-    game.timeline.forEach(item=>{
-
-        const card=document.createElement("div");
-
-        card.className="eventLog";
-
-        card.innerHTML=`<p>${item}</p>`;
-
-        container.appendChild(card);
-
-    });
-
-}
-
-//======================================
-// STRESS INSIGHTS
-//======================================
-
-function buildInsights(){
-
-    const insights=document.getElementById("insights");
-
-    const energyLost=100-game.player.energy;
-
-    const focusLost=100-game.player.focus;
-
-    const moodLost=100-game.player.mood;
-
-    const total=
-
-        energyLost+
-
-        focusLost+
-
-        moodLost;
-
-    function percent(value){
-
-        if(total===0){
-
-            return 0;
-
-        }
-
-        return Math.round(
-
-            value/total*100
-
-        );
-
-    }
-
-    insights.innerHTML=`
-
-        <div class="insight">
-
-            <div class="insightHeader">
-
-                <span>⚡ Energy Drain</span>
-
-                <span>${percent(energyLost)}%</span>
-
-            </div>
-
-            <div class="insightBar">
-
-                <div
-
-                    class="insightFill"
-
-                    style="width:${percent(energyLost)}%">
-
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="insight">
-
-            <div class="insightHeader">
-
-                <span>🧠 Focus Loss</span>
-
-                <span>${percent(focusLost)}%</span>
-
-            </div>
-
-            <div class="insightBar">
-
-                <div
-
-                    class="insightFill"
-
-                    style="width:${percent(focusLost)}%">
-
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="insight">
-
-            <div class="insightHeader">
-
-                <span>😊 Mood Impact</span>
-
-                <span>${percent(moodLost)}%</span>
-
-            </div>
-
-            <div class="insightBar">
-
-                <div
-
-                    class="insightFill"
-
-                    style="width:${percent(moodLost)}%">
-
-                </div>
-
-            </div>
-
-        </div>
-
-    `;
-
-    // Reflection
-
-    let reflection="";
-
-    const average=
-
-        (game.player.energy+
-
-        game.player.focus+
-
-        game.player.mood)/3;
-
-    if(average>=80){
-
-        reflection=
-
-        "Excellent resource management. You balanced work demands while protecting your mental resources. Stress wasn't absent—you budgeted it wisely.";
-
-    }
-
-    else if(average>=60){
-
-        reflection=
-
-        "A solid day overall. Some moments drained your resources, but your recovery decisions helped you stay productive.";
-
-    }
-
-    else if(average>=40){
-
-        reflection=
-
-        "Today became reactive rather than intentional. Interruptions and workload gradually depleted your Stress Budget.";
-
-    }
-
-    else{
-
-        reflection=
-
-        "Your Stress Budget was exhausted early. Once resources became low, every new challenge felt harder. This illustrates how unmanaged stress compounds over the day.";
-
-    }
-
-    const box=document.createElement("div");
-
-    box.className="eventLog";
-
-    box.style.marginTop="35px";
-
-    box.innerHTML=`
-
-        <h3>Your Reflection</h3>
-
-        <p style="margin-top:12px">
-
-            ${reflection}
-
-        </p>
-
-    `;
-
-    insights.appendChild(box);
-
-}
-/*=====================================================
-PART D
-POLISH + IMMERSION
-=====================================================*/
-
-//======================================
-// Dynamic Calendar
-//======================================
-
-const calendarEvents=[
-
-"09:30 • Team Stand-up",
-"10:30 • Deep Work",
-"11:30 • Client Review",
-"01:00 • Lunch",
-"02:00 • Project Meeting",
-"03:00 • 1:1 with Manager",
-"04:00 • Email Catch-up",
-"05:30 • Wrap Up"
-
-];
-
-function updateCalendar(){
-
-    let hour=Math.floor(game.player.time/60);
-
-    let index=Math.floor((hour-8));
-
-    if(index<0) index=0;
-
-    if(index>=calendarEvents.length){
-
-        document.getElementById("calendarText").innerHTML=
-
-        "Workday Complete";
-
-        return;
-
-    }
-
-    document.getElementById("calendarText").innerHTML=
-
-    calendarEvents[index];
-
-}
-
-//======================================
-// Inbox Growth
-//======================================
-
-function randomInbox(){
-
-    const increase=Math.floor(Math.random()*3);
-
-    game.player.inbox+=increase;
-
-    updateHUD();
-
-}
-
-//======================================
-// Resource Warnings
-//======================================
-
-function checkResources(){
-
-    if(game.player.energy<30){
-
-        toast("⚡ Energy is running low.");
-
-    }
-
-    if(game.player.focus<30){
-
-        toast("🧠 You're losing concentration.");
-
-    }
-
-    if(game.player.mood<30){
-
-        toast("😊 Mood is dropping.");
-
-    }
-
-}
-
-//======================================
-// Resource Colours
-//======================================
-
-function colourBars(){
-
-    colour(
-
-        energyBar,
-
-        game.player.energy
-
-    );
-
-    colour(
-
-        focusBar,
-
-        game.player.focus
-
-    );
-
-    colour(
-
-        moodBar,
-
-        game.player.mood
-
-    );
-
-}
-
-function colour(bar,value){
-
-    if(value>60){
-
-        bar.style.filter="none";
-
-        return;
-
-    }
-
-    if(value>30){
-
-        bar.style.filter="hue-rotate(-40deg)";
-
-        return;
-
-    }
-
-    bar.style.filter="hue-rotate(-90deg)";
-
-}
-
-//======================================
-// Override HUD
-//======================================
-
-const originalHUD=updateHUD;
-
-updateHUD=function(){
-
-    originalHUD();
-
-    updateCalendar();
-
-    colourBars();
-
-    checkResources();
-
-}
-
-//======================================
-// Daily Quote
-//======================================
-
-const quotes=[
-
-"Stress is inevitable. Exhaustion isn't.",
-
-"Every decision spends a little attention.",
-
-"Focus is a limited resource.",
-
-"Recovery is productive.",
-
-"You don't eliminate stress—you budget it.",
-
-"Small interruptions become big drains."
-
-];
-
-console.log(
-
-quotes[
-
-Math.floor(
-
-Math.random()*quotes.length
-
-)
-
-]
-
-);
-
-//======================================
-// Idle Notifications
-//======================================
-
-const idleMessages=[
-
-"🔔 Slack: Someone mentioned you.",
-
-"📧 Another email arrived.",
-
-"📅 Upcoming meeting in 15 minutes.",
-
-"💬 Teams notification.",
-
-"☕ Remember to take a short break."
-
-];
-
-setInterval(()=>{
-
-    if(document.getElementById("eventScreen").classList.contains("active")){
-
-        toast(
-
-            idleMessages[
-
-            Math.floor(
-
-            Math.random()*idleMessages.length
-
-            )
-
-        ]);
-
-    }
-
-},30000);
-
-//======================================
-// Keyboard Support
-//======================================
-
-document.addEventListener("keydown",(e)=>{
-
-    const cards=document.querySelectorAll(".choice");
-
-    if(cards.length===0) return;
-
-    if(e.key==="1") cards[0].click();
-
-    if(e.key==="2" && cards[1]) cards[1].click();
-
-    if(e.key==="3" && cards[2]) cards[2].click();
-
-});
-
-//======================================
-// Welcome Animation
-//======================================
-
-window.onload=()=>{
-
-    toast("Welcome to Monday.");
-
-    updateHUD();
-
-};
+})();

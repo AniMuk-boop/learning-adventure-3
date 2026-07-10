@@ -6,7 +6,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Monday | Stress Budget</title>
+<title>MONDAY • Stress Budget</title>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,17 +23,17 @@
 
 <div id="app">
 
-    <!-- ===============================
-         TOP BAR
-    ================================ -->
+    <!-- ===================================== -->
+    <!-- HEADER -->
+    <!-- ===================================== -->
 
     <header id="topBar">
 
         <div class="logo">
 
-            MONDAY
+            <h1>MONDAY</h1>
 
-            <span>Stress Budget</span>
+            <span>Stress Budget Simulator</span>
 
         </div>
 
@@ -45,9 +45,9 @@
 
     </header>
 
-    <!-- ===============================
-         HUD
-    ================================ -->
+    <!-- ===================================== -->
+    <!-- HUD -->
+    <!-- ===================================== -->
 
     <section id="hud">
 
@@ -107,81 +107,65 @@
 
     </section>
 
-    <!-- ===============================
-         PROGRESS
-    ================================ -->
+    <!-- ===================================== -->
+    <!-- PROGRESS -->
+    <!-- ===================================== -->
 
-    <section id="progressContainer">
+    <div id="progressContainer">
 
         <div id="progressBar"></div>
 
-    </section>
+    </div>
 
-    <!-- ===============================
-         MAIN GAME CARD
-    ================================ -->
+    <!-- ===================================== -->
+    <!-- MAIN -->
+    <!-- ===================================== -->
 
     <main id="gameCard">
 
-        <!-- Landing Screen -->
+        <!-- Landing -->
 
         <section id="landing" class="screen active">
 
-            <h1>
-
-                Welcome to Monday.
-
-            </h1>
+            <h2>Welcome to Monday.</h2>
 
             <p>
 
-                Everyone starts with a different amount of mental energy.
+                Every workday begins with a limited amount of Energy, Focus and Mood.
 
-                Throughout the day you'll spend Energy, Focus and Mood.
+                Throughout the day you'll make decisions that either protect or drain these resources.
 
-                The goal isn't to avoid stress.
-
-                It's to manage your resources well enough to deal with the unexpected.
+                Your objective isn't to eliminate stress—it's to budget it wisely.
 
             </p>
 
             <button id="beginBtn">
 
-                Start My Day →
+                Start My Day
 
             </button>
 
         </section>
 
-        <!-- Character Setup -->
+        <!-- Morning Setup -->
 
         <section id="setup" class="screen">
 
-            <h2>
+            <h2>Before Work</h2>
 
-                Before work...
+            <p>How did your morning go?</p>
 
-            </h2>
-
-            <p>
-
-                Build your morning.
-
-            </p>
-
-            <div id="setupContainer">
-
-            </div>
+            <div id="setupContainer"></div>
 
             <button id="startGame">
 
-                Begin Workday →
+                Begin Workday
 
             </button>
 
         </section>
 
-        <!-- Event Screen -->
+        <!-- Event -->
 
         <section id="eventScreen" class="screen">
 
@@ -193,13 +177,13 @@
 
             <h2 id="eventTitle">
 
-                Event
+                Event Title
 
             </h2>
 
             <p id="eventText">
 
-                Description
+                Event description
 
             </p>
 
@@ -209,59 +193,27 @@
 
         </section>
 
-        <!-- Small Reflection -->
-
-        <section id="reflection" class="screen">
-
-            <h2>
-
-                Pause.
-
-            </h2>
-
-            <p id="reflectionText">
-
-            </p>
-
-            <button id="continueBtn">
-
-                Continue →
-
-            </button>
-
-        </section>
-
         <!-- Ending -->
 
         <section id="ending" class="screen">
 
-            <h1>
+            <h2>Your Monday</h2>
 
-                Your Monday
+            <p>
 
-            </h1>
+                Here's how you managed your Stress Budget today.
 
-            <div id="summary">
+            </p>
 
-            </div>
+            <div id="summary"></div>
 
-            <div id="timeline">
+            <h3>Today's Timeline</h3>
 
-            </div>
+            <div id="timeline"></div>
 
-            <div id="insightCard">
+            <h3>Stress Drivers</h3>
 
-                <h3>
-
-                    What actually drained you?
-
-                </h3>
-
-                <div id="insights">
-
-                </div>
-
-            </div>
+            <div id="insights"></div>
 
             <button id="playAgain">
 
@@ -273,23 +225,19 @@
 
     </main>
 
-    <!-- ===============================
-         SIDEBAR
-    ================================ -->
+    <!-- ===================================== -->
+    <!-- SIDEBAR -->
+    <!-- ===================================== -->
 
     <aside id="sidebar">
 
         <div class="widget">
 
-            <h3>
-
-                Inbox
-
-            </h3>
+            <h3>Inbox</h3>
 
             <div id="mailCount">
 
-                0 unread
+                3 unread
 
             </div>
 
@@ -297,15 +245,11 @@
 
         <div class="widget">
 
-            <h3>
-
-                Calendar
-
-            </h3>
+            <h3>Calendar</h3>
 
             <div id="calendarText">
 
-                Your day is clear.
+                Team Stand-up • 9:30 AM
 
             </div>
 
@@ -313,11 +257,7 @@
 
         <div class="widget">
 
-            <h3>
-
-                Timeline
-
-            </h3>
+            <h3>Timeline</h3>
 
             <div id="miniTimeline">
 
@@ -329,23 +269,13 @@
 
 </div>
 
-<!-- Floating notification -->
+<!-- ===================================== -->
+<!-- TOAST -->
+<!-- ===================================== -->
 
 <div id="notification">
 
-    <span id="notificationText">
-
-    </span>
-
-</div>
-
-<!-- Modal -->
-
-<div id="modal">
-
-    <div id="modalContent">
-
-    </div>
+    <span id="notificationText"></span>
 
 </div>
 

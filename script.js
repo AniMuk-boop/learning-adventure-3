@@ -1328,3 +1328,262 @@ function buildInsights(){
     insights.appendChild(box);
 
 }
+/*=====================================================
+PART D
+POLISH + IMMERSION
+=====================================================*/
+
+//======================================
+// Dynamic Calendar
+//======================================
+
+const calendarEvents=[
+
+"09:30 • Team Stand-up",
+"10:30 • Deep Work",
+"11:30 • Client Review",
+"01:00 • Lunch",
+"02:00 • Project Meeting",
+"03:00 • 1:1 with Manager",
+"04:00 • Email Catch-up",
+"05:30 • Wrap Up"
+
+];
+
+function updateCalendar(){
+
+    let hour=Math.floor(game.player.time/60);
+
+    let index=Math.floor((hour-8));
+
+    if(index<0) index=0;
+
+    if(index>=calendarEvents.length){
+
+        document.getElementById("calendarText").innerHTML=
+
+        "Workday Complete";
+
+        return;
+
+    }
+
+    document.getElementById("calendarText").innerHTML=
+
+    calendarEvents[index];
+
+}
+
+//======================================
+// Inbox Growth
+//======================================
+
+function randomInbox(){
+
+    const increase=Math.floor(Math.random()*3);
+
+    game.player.inbox+=increase;
+
+    updateHUD();
+
+}
+
+//======================================
+// Resource Warnings
+//======================================
+
+function checkResources(){
+
+    if(game.player.energy<30){
+
+        toast("⚡ Energy is running low.");
+
+    }
+
+    if(game.player.focus<30){
+
+        toast("🧠 You're losing concentration.");
+
+    }
+
+    if(game.player.mood<30){
+
+        toast("😊 Mood is dropping.");
+
+    }
+
+}
+
+//======================================
+// Resource Colours
+//======================================
+
+function colourBars(){
+
+    colour(
+
+        energyBar,
+
+        game.player.energy
+
+    );
+
+    colour(
+
+        focusBar,
+
+        game.player.focus
+
+    );
+
+    colour(
+
+        moodBar,
+
+        game.player.mood
+
+    );
+
+}
+
+function colour(bar,value){
+
+    if(value>60){
+
+        bar.style.filter="none";
+
+        return;
+
+    }
+
+    if(value>30){
+
+        bar.style.filter="hue-rotate(-40deg)";
+
+        return;
+
+    }
+
+    bar.style.filter="hue-rotate(-90deg)";
+
+}
+
+//======================================
+// Override HUD
+//======================================
+
+const originalHUD=updateHUD;
+
+updateHUD=function(){
+
+    originalHUD();
+
+    updateCalendar();
+
+    colourBars();
+
+    checkResources();
+
+}
+
+//======================================
+// Daily Quote
+//======================================
+
+const quotes=[
+
+"Stress is inevitable. Exhaustion isn't.",
+
+"Every decision spends a little attention.",
+
+"Focus is a limited resource.",
+
+"Recovery is productive.",
+
+"You don't eliminate stress—you budget it.",
+
+"Small interruptions become big drains."
+
+];
+
+console.log(
+
+quotes[
+
+Math.floor(
+
+Math.random()*quotes.length
+
+)
+
+]
+
+);
+
+//======================================
+// Idle Notifications
+//======================================
+
+const idleMessages=[
+
+"🔔 Slack: Someone mentioned you.",
+
+"📧 Another email arrived.",
+
+"📅 Upcoming meeting in 15 minutes.",
+
+"💬 Teams notification.",
+
+"☕ Remember to take a short break."
+
+];
+
+setInterval(()=>{
+
+    if(document.getElementById("eventScreen").classList.contains("active")){
+
+        toast(
+
+            idleMessages[
+
+            Math.floor(
+
+            Math.random()*idleMessages.length
+
+            )
+
+        ]);
+
+    }
+
+},30000);
+
+//======================================
+// Keyboard Support
+//======================================
+
+document.addEventListener("keydown",(e)=>{
+
+    const cards=document.querySelectorAll(".choice");
+
+    if(cards.length===0) return;
+
+    if(e.key==="1") cards[0].click();
+
+    if(e.key==="2" && cards[1]) cards[1].click();
+
+    if(e.key==="3" && cards[2]) cards[2].click();
+
+});
+
+//======================================
+// Welcome Animation
+//======================================
+
+window.onload=()=>{
+
+    toast("Welcome to Monday.");
+
+    updateHUD();
+
+};

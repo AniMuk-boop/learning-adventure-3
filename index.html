@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Monday | Stress Budget</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+<div class="background"></div>
+
+<div id="app">
+
+    <!-- ===============================
+         TOP BAR
+    ================================ -->
+
+    <header id="topBar">
+
+        <div class="logo">
+
+            MONDAY
+
+            <span>Stress Budget</span>
+
+        </div>
+
+        <div id="clock">
+
+            08:30
+
+        </div>
+
+    </header>
+
+    <!-- ===============================
+         HUD
+    ================================ -->
+
+    <section id="hud">
+
+        <div class="resource">
+
+            <div class="resourceHeader">
+
+                <span>⚡ Energy</span>
+
+                <span id="energyValue">100</span>
+
+            </div>
+
+            <div class="bar">
+
+                <div id="energyBar" class="fill energy"></div>
+
+            </div>
+
+        </div>
+
+        <div class="resource">
+
+            <div class="resourceHeader">
+
+                <span>🧠 Focus</span>
+
+                <span id="focusValue">100</span>
+
+            </div>
+
+            <div class="bar">
+
+                <div id="focusBar" class="fill focus"></div>
+
+            </div>
+
+        </div>
+
+        <div class="resource">
+
+            <div class="resourceHeader">
+
+                <span>😊 Mood</span>
+
+                <span id="moodValue">100</span>
+
+            </div>
+
+            <div class="bar">
+
+                <div id="moodBar" class="fill mood"></div>
+
+            </div>
+
+        </div>
+
+    </section>
+
+    <!-- ===============================
+         PROGRESS
+    ================================ -->
+
+    <section id="progressContainer">
+
+        <div id="progressBar"></div>
+
+    </section>
+
+    <!-- ===============================
+         MAIN GAME CARD
+    ================================ -->
+
+    <main id="gameCard">
+
+        <!-- Landing Screen -->
+
+        <section id="landing" class="screen active">
+
+            <h1>
+
+                Welcome to Monday.
+
+            </h1>
+
+            <p>
+
+                Everyone starts with a different amount of mental energy.
+
+                Throughout the day you'll spend Energy, Focus and Mood.
+
+                The goal isn't to avoid stress.
+
+                It's to manage your resources well enough to deal with the unexpected.
+
+            </p>
+
+            <button id="beginBtn">
+
+                Start My Day →
+
+            </button>
+
+        </section>
+
+        <!-- Character Setup -->
+
+        <section id="setup" class="screen">
+
+            <h2>
+
+                Before work...
+
+            </h2>
+
+            <p>
+
+                Build your morning.
+
+            </p>
+
+            <div id="setupContainer">
+
+            </div>
+
+            <button id="startGame">
+
+                Begin Workday →
+
+            </button>
+
+        </section>
+
+        <!-- Event Screen -->
+
+        <section id="eventScreen" class="screen">
+
+            <div id="eventType">
+
+                Slack
+
+            </div>
+
+            <h2 id="eventTitle">
+
+                Event
+
+            </h2>
+
+            <p id="eventText">
+
+                Description
+
+            </p>
+
+            <div id="choices">
+
+            </div>
+
+        </section>
+
+        <!-- Small Reflection -->
+
+        <section id="reflection" class="screen">
+
+            <h2>
+
+                Pause.
+
+            </h2>
+
+            <p id="reflectionText">
+
+            </p>
+
+            <button id="continueBtn">
+
+                Continue →
+
+            </button>
+
+        </section>
+
+        <!-- Ending -->
+
+        <section id="ending" class="screen">
+
+            <h1>
+
+                Your Monday
+
+            </h1>
+
+            <div id="summary">
+
+            </div>
+
+            <div id="timeline">
+
+            </div>
+
+            <div id="insightCard">
+
+                <h3>
+
+                    What actually drained you?
+
+                </h3>
+
+                <div id="insights">
+
+                </div>
+
+            </div>
+
+            <button id="playAgain">
+
+                Play Again
+
+            </button>
+
+        </section>
+
+    </main>
+
+    <!-- ===============================
+         SIDEBAR
+    ================================ -->
+
+    <aside id="sidebar">
+
+        <div class="widget">
+
+            <h3>
+
+                Inbox
+
+            </h3>
+
+            <div id="mailCount">
+
+                0 unread
+
+            </div>
+
+        </div>
+
+        <div class="widget">
+
+            <h3>
+
+                Calendar
+
+            </h3>
+
+            <div id="calendarText">
+
+                Your day is clear.
+
+            </div>
+
+        </div>
+
+        <div class="widget">
+
+            <h3>
+
+                Timeline
+
+            </h3>
+
+            <div id="miniTimeline">
+
+            </div>
+
+        </div>
+
+    </aside>
+
+</div>
+
+<!-- Floating notification -->
+
+<div id="notification">
+
+    <span id="notificationText">
+
+    </span>
+
+</div>
+
+<!-- Modal -->
+
+<div id="modal">
+
+    <div id="modalContent">
+
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+
+</body>
+
+</html>
